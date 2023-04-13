@@ -3,7 +3,7 @@ GO_BUILD := go build
 
 IMAGE_TAG=$(shell ./tools/image-tag)
 IMAGE_BRANCH_TAG=$(shell ./tools/image-tag branch)
-CONTAINER_REPO ?= quay.io/kinvolk/seccompagent
+CONTAINER_REPO ?= haih/spireseccompagent
 
 .PHONY: seccompagent
 seccompagent:

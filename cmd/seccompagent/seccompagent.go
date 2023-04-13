@@ -186,6 +186,10 @@ func main() {
 			if len(allowedFilesystems) > 0 {
 				r.SyscallHandler["mount"] = handlers.Mount(allowedFilesystems)
 			}
+
+            if _, ok := metadata["SPIRE"]; ok {
+                r.SyscallHandler["openat"] = handlers.OpenIdentityDocument()
+            }
 			return r
 		}
 		var err error

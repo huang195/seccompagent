@@ -221,7 +221,13 @@ func notifHandler(reg *registry.Registry, seccompFile *os.File) {
 				resp.Error = result.ErrVal
 				resp.Val = result.Val
 				resp.Flags = result.Flags
-			}
+			} else {
+                log.WithFields(log.Fields{
+                    "fd":      fd,
+                    "syscall": syscallName,
+                    "req":     req,
+                }).Trace("No handler for syscall found")
+            }
 		}
 
 		if err = libseccomp.NotifRespond(fd, resp); err != nil {
