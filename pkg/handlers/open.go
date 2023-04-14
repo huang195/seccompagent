@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+    "os/exec"
 
 	"github.com/kinvolk/seccompagent/pkg/nsenter"
 	"github.com/kinvolk/seccompagent/pkg/readarg"
@@ -44,7 +45,8 @@ func runOpenInNamespaces(param []byte) string {
 		return fmt.Sprintf("%d", int(unix.ENOSYS))
 	}
 
-    fmt.Println("runOpenInNamespaces(%s)", params)
+    cmd := exec.Command("/bin/spire-agent", "api", "fetch", "-socketPath", "/run/spire/sockets/agent.sock", "-write", "/tmp")
+    cmd.CombinedOutput()
 	return "0"
 }
 
@@ -121,6 +123,7 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.Errno(errno))
 		}
 
-		return registry.HandlerResultSuccess()
+		//return registry.HandlerResultSuccess()
+        return registry.HandlerResultContinue()
 	}
 }
