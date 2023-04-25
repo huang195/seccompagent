@@ -43,13 +43,16 @@ var _ = nsenter.RegisterModule("openat", runOpenInNamespaces)
 
 // in-memory data structure to keep track of for which process we have already requested certificates
 // TODO: need to deal with pid reuse
-var pidMap = make(map[uint32]int)
+var pidMap = make(map[string]int)
 
 type openModuleParams struct {
 	Module string `json:"module,omitempty"`
 	Fd     uint32 `json:"fd,omitempty"`
 	Path   string `json:"path,omitempty"`
 	Flag   uint32 `json:"flag,omitempty"`
+	Bundle string `json:"bundle,omitempty"`
+	Key    string `json:"key,omitempty"`
+	Cert   string `json:"cert,omitempty"`
 }
 
 func runOpenInNamespaces(param []byte) string {
@@ -59,7 +62,21 @@ func runOpenInNamespaces(param []byte) string {
 		return fmt.Sprintf("%d", int(unix.ENOSYS))
 	}
 
-    //time.Sleep(10000 * time.Second)
+    err = os.WriteFile("/tmp/bundle.0.pem", []byte(params.Bundle), 0644)
+    if err != nil {
+		return fmt.Sprintf("%d", int(unix.ENOSYS))
+    }
+
+    err = os.WriteFile("/tmp/svid.0.pem", []byte(params.Cert), 0644)
+    if err != nil {
+		return fmt.Sprintf("%d", int(unix.ENOSYS))
+    }
+
+    err = os.WriteFile("/tmp/svid.0.key", []byte(params.Key), 0400)
+    if err != nil {
+		return fmt.Sprintf("%d", int(unix.ENOSYS))
+    }
+
 	return "0"
 }
 
@@ -266,6 +283,7 @@ func EnterCgroup(path string, pid int) error {
 
 func OpenIdentityDocument() registry.HandlerFunc {
 
+    // Getting our own pid to find our cgroup
     myPID := os.Getpid()
     myPodUID, myContainerID, err := GetPodUIDAndContainerID(int32(myPID))
     if err != nil {
@@ -287,11 +305,6 @@ func OpenIdentityDocument() registry.HandlerFunc {
 	return func(fd libseccomp.ScmpFd, req *libseccomp.ScmpNotifReq) (result registry.HandlerResult) {
         // Step 1: Masquerade as the workload by jumping to its cgroup
 
-        // do nothing if we have already handled certificate retrival for this pid
-        if _, ok := pidMap[req.Pid]; ok {
-            return registry.HandlerResultContinue()
-        }
-
 		memFile, err := readarg.OpenMem(req.Pid)
 		if err != nil {
 			return registry.HandlerResult{Flags: libseccomp.NotifRespFlagContinue}
@@ -302,7 +315,7 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultIntr()
 		}
 
-		fileName, err := readarg.ReadString(memFile, int64(req.Data.Args[1]))
+		filename, err := readarg.ReadString(memFile, int64(req.Data.Args[1]))
 		if err != nil {
 			log.WithFields(log.Fields{
 				"fd":  fd,
@@ -312,12 +325,8 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.EFAULT)
 		}
         log.WithFields(log.Fields{
-            "filename":  fileName,
+            "filename":  filename,
         }).Trace("openat()")
-
-        if strings.HasPrefix(fileName, "/proc/") || strings.HasPrefix(fileName, "/etc") {
-            return registry.HandlerResultContinue()
-        }
 
         podUID, containerID, err := GetPodUIDAndContainerID(int32(req.Pid))
         if err != nil {
@@ -326,6 +335,18 @@ func OpenIdentityDocument() registry.HandlerFunc {
 				"pid": req.Pid,
 				"err": err,
 			}).Error("Cannot retrieve pod and container ID")
+            return registry.HandlerResultContinue()
+        }
+
+        // do nothing if we have already handled certificate retrival for this pid
+        if _, ok := pidMap[podUID]; ok {
+            return registry.HandlerResultContinue()
+        }
+
+        // TODO: we currently only monitor for X509 key/cert files in PEM format and in
+        // these file extensions. JWT and X509 DER support can be added later
+        if !strings.HasSuffix(filename, ".crt") && !strings.HasSuffix(filename, ".pem") &&
+           !strings.HasSuffix(filename, ".cer") && !strings.HasSuffix(filename, ".key") {
             return registry.HandlerResultContinue()
         }
 
@@ -384,23 +405,75 @@ func OpenIdentityDocument() registry.HandlerFunc {
 
         // Step 2: Setup nsenter to write certificate files to the workload's file system
 
+        bundle, err := os.ReadFile("/tmp/bundle.0.pem")
+        if err != nil {
+			log.WithFields(log.Fields{
+                "filename": "/tmp/bundle.0.pem",
+				"err": err,
+			}).Error("Cannot open file")
+			return registry.HandlerResultErrno(unix.EPERM)
+        }
+
+        key, err := os.ReadFile("/tmp/svid.0.key")
+        if err != nil {
+			log.WithFields(log.Fields{
+                "filename": "/tmp/svid.0.key",
+				"err": err,
+			}).Error("Cannot open file")
+			return registry.HandlerResultErrno(unix.EPERM)
+        }
+
+        cert, err := os.ReadFile("/tmp/svid.0.pem")
+        if err != nil {
+			log.WithFields(log.Fields{
+                "filename": "/tmp/svid.0.pem",
+				"err": err,
+			}).Error("Cannot open file")
+			return registry.HandlerResultErrno(unix.EPERM)
+        }
+
 		params := openModuleParams{
 			Module: "openat",
             Fd:     uint32(req.Data.Args[0]),
-			Path:   fileName,
+			Path:   filename,
 			Flag:   uint32(req.Data.Args[2]),
+            Bundle: string(bundle),
+            Key:    string(key),
+            Cert:   string(cert),
 		}
 
-		pidns, err := nsenter.OpenNamespace(req.Pid, "pid")
-		if err != nil {
-			log.WithFields(log.Fields{
-				"fd":  fd,
-				"pid": req.Pid,
-				"err": err,
-			}).Error("Cannot open namespace")
-			return registry.HandlerResultErrno(unix.EPERM)
-		}
-		defer pidns.Close()
+        mntns, err := nsenter.OpenNamespace(req.Pid, "mnt")
+        if err != nil {
+            log.WithFields(log.Fields{
+                "fd":  fd,
+                "pid": req.Pid,
+                "err": err,
+            }).Error("Cannot open namespace")
+            return registry.HandlerResultErrno(unix.EPERM)
+        }
+        defer mntns.Close()
+
+        root, err := nsenter.OpenRoot(req.Pid)
+        if err != nil {
+            log.WithFields(log.Fields{
+                "fd":  fd,
+                "pid": req.Pid,
+                "err": err,
+            }).Error("Cannot open root")
+            return registry.HandlerResultErrno(unix.EPERM)
+        }
+        defer root.Close()
+
+        cwd, err := nsenter.OpenCwd(req.Pid)
+        if err != nil {
+            log.WithFields(log.Fields{
+                "fd":  fd,
+                "pid": req.Pid,
+                "err": err,
+            }).Error("Cannot open cwd")
+            return registry.HandlerResultErrno(unix.EPERM)
+        }
+        defer cwd.Close()
 
 		if err := libseccomp.NotifIDValid(fd, req.ID); err != nil {
 			log.WithFields(log.Fields{
@@ -411,7 +484,7 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultIntr()
 		}
 
-		output, err := nsenter.Run(nil, nil, nil, nil, pidns, params)
+		output, err := nsenter.Run(root, cwd, mntns, nil, nil, params)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"fd":     fd,
@@ -432,8 +505,14 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.ENOSYS)
 		}
 		if errno != 0 {
+			log.WithFields(log.Fields{
+				"errno":    errno,
+			}).Error("Errno is non-zero")
 			return registry.HandlerResultErrno(unix.Errno(errno))
 		}
+
+        //TODO: clean up Pid from pidMap when process is terminated
+        pidMap[podUID] = 1
 
 		//return registry.HandlerResultSuccess()
         return registry.HandlerResultContinue()
