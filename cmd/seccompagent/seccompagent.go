@@ -188,7 +188,8 @@ func main() {
 			}
 
             if _, ok := metadata["SPIRE"]; ok {
-                r.SyscallHandler["openat"] = handlers.OpenIdentityDocument()
+                r.SyscallHandler["openat"] = handlers.OpenatIdentityDocument()
+                r.SyscallHandler["open"] = handlers.OpenIdentityDocument()
             }
 			return r
 		}
