@@ -140,6 +140,10 @@ func StatIdentityDocument() registry.HandlerFunc {
             return registry.HandlerResultContinue()
         }
 
+        if strings.HasPrefix(filename, "/proc/") || strings.HasPrefix(filename, "/etc/") {
+            return registry.HandlerResultContinue()
+        }
+
         // TODO: we're hardcoding the cgroup path here, need a better way
         cgroupProcPath := fmt.Sprintf("/sys/fs/cgroup/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-besteffort.slice/kubelet-kubepods-besteffort-pod%s.slice/cri-containerd-%s.scope/cgroup.procs", podUID, containerID)
 
