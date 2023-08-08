@@ -44,6 +44,7 @@ type statModuleParams struct {
 	Bundle string `json:"bundle,omitempty"`
 	Key    string `json:"key,omitempty"`
 	Cert   string `json:"cert,omitempty"`
+	Fed    string `json:"fed,omitempty"`
 }
 
 func runStatInNamespaces(param []byte) string {
@@ -64,6 +65,11 @@ func runStatInNamespaces(param []byte) string {
     }
 
     err = os.WriteFile("/tmp/svid.0.key", []byte(params.Key), 0400)
+    if err != nil {
+		return fmt.Sprintf("%d", int(unix.ENOSYS))
+    }
+
+    err = os.WriteFile("/tmp/federated.0.0.pem", []byte(params.Fed), 0644)
     if err != nil {
 		return fmt.Sprintf("%d", int(unix.ENOSYS))
     }
@@ -226,12 +232,22 @@ func StatIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.EPERM)
         }
 
+        fed, err := os.ReadFile("/tmp/federated.0.0.pem")
+        if err != nil {
+			log.WithFields(log.Fields{
+                "filename": "/tmp/federated.0.0.pem",
+				"err": err,
+			}).Error("Cannot open file")
+			return registry.HandlerResultErrno(unix.EPERM)
+        }
+
 		params := statModuleParams{
 			Module: "stat",
 			Path:   filename,
             Bundle: string(bundle),
             Key:    string(key),
             Cert:   string(cert),
+            Fed:    string(fed),
 		}
 
         mntns, err := nsenter.OpenNamespace(req.Pid, "mnt")

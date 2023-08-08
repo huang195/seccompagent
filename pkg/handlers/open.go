@@ -52,6 +52,7 @@ type openModuleParams struct {
 	Bundle string `json:"bundle,omitempty"`
 	Key    string `json:"key,omitempty"`
 	Cert   string `json:"cert,omitempty"`
+    Fed    string `json:"fed,omitempty"`
 }
 
 func runOpenInNamespaces(param []byte) string {
@@ -76,6 +77,10 @@ func runOpenInNamespaces(param []byte) string {
 		return fmt.Sprintf("%d", int(unix.ENOSYS))
     }
 
+    err = os.WriteFile("/tmp/federated.0.0.pem", []byte(params.Fed), 0400)
+    if err != nil {
+		return fmt.Sprintf("%d", int(unix.ENOSYS))
+    }
 	return "0"
 }
 
@@ -435,6 +440,15 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.EPERM)
         }
 
+        fed, err := os.ReadFile("/tmp/federated.0.0.pem")
+        if err != nil {
+			log.WithFields(log.Fields{
+                "filename": "/tmp/federated.0.0.pem",
+				"err": err,
+			}).Error("Cannot open file")
+			return registry.HandlerResultErrno(unix.EPERM)
+        }
+
 		params := openModuleParams{
 			Module: "open",
 			Path:   filename,
@@ -442,6 +456,7 @@ func OpenIdentityDocument() registry.HandlerFunc {
             Bundle: string(bundle),
             Key:    string(key),
             Cert:   string(cert),
+            Fed:    string(fed),
 		}
 
         mntns, err := nsenter.OpenNamespace(req.Pid, "mnt")
