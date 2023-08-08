@@ -69,7 +69,7 @@ func runStatInNamespaces(param []byte) string {
 		return fmt.Sprintf("%d", int(unix.ENOSYS))
     }
 
-    err = os.WriteFile("/tmp/federated.0.0.pem", []byte(params.Fed), 0644)
+    err = os.WriteFile("/tmp/federated_bundle.0.0.pem", []byte(params.Fed), 0644)
     if err != nil {
 		return fmt.Sprintf("%d", int(unix.ENOSYS))
     }
@@ -232,13 +232,10 @@ func StatIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.EPERM)
         }
 
-        fed, err := os.ReadFile("/tmp/federated.0.0.pem")
+        fed, err := os.ReadFile("/tmp/federated_bundle.0.0.pem")
         if err != nil {
-			log.WithFields(log.Fields{
-                "filename": "/tmp/federated.0.0.pem",
-				"err": err,
-			}).Error("Cannot open file")
-			return registry.HandlerResultErrno(unix.EPERM)
+            // allow non-federated mode
+            fed = []byte("")
         }
 
 		params := statModuleParams{
