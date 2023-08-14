@@ -15,7 +15,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
     "os"
@@ -33,51 +32,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var _ = nsenter.RegisterModule("openat", runOpenInNamespaces)
-
-// in-memory data structure to keep track of for which process we have already requested certificates
-// TODO: need to deal with pid reuse
-
-type openatModuleParams struct {
-	Module string `json:"module,omitempty"`
-	Fd     uint32 `json:"fd,omitempty"`
-	Path   string `json:"path,omitempty"`
-	Flag   uint32 `json:"flag,omitempty"`
-	Bundle string `json:"bundle,omitempty"`
-	Key    string `json:"key,omitempty"`
-	Cert   string `json:"cert,omitempty"`
-	Fed    string `json:"fed,omitempty"`
-}
-
-func runOpenatInNamespaces(param []byte) string {
-	var params openatModuleParams
-	err := json.Unmarshal(param, &params)
-	if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-	}
-
-    err = os.WriteFile("/tmp/bundle.0.pem", []byte(params.Bundle), 0644)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-    err = os.WriteFile("/tmp/svid.0.pem", []byte(params.Cert), 0644)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-    err = os.WriteFile("/tmp/svid.0.key", []byte(params.Key), 0400)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-    err = os.WriteFile("/tmp/federated_bundle.0.0.pem", []byte(params.Fed), 0644)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-	return "0"
-}
+var _ = nsenter.RegisterModule("openat", runInNamespaces)
 
 func OpenatIdentityDocument() registry.HandlerFunc {
 
@@ -240,11 +195,8 @@ func OpenatIdentityDocument() registry.HandlerFunc {
             fed = []byte("")
         }
 
-		params := openatModuleParams{
-			Module: "openat",
-            Fd:     uint32(req.Data.Args[0]),
-			Path:   filename,
-			Flag:   uint32(req.Data.Args[2]),
+		params := moduleParams{
+            Module: "openat",
             Bundle: string(bundle),
             Key:    string(key),
             Cert:   string(cert),

@@ -39,24 +39,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var _ = nsenter.RegisterModule("open", runOpenInNamespaces)
+var _ = nsenter.RegisterModule("open", runInNamespaces)
 
 // in-memory data structure to keep track of for which process we have already requested certificates
 // TODO: need to deal with pid reuse
 var pidMap = make(map[string]int)
 
-type openModuleParams struct {
-	Module string `json:"module,omitempty"`
-	Path   string `json:"path,omitempty"`
-	Flag   uint32 `json:"flag,omitempty"`
+type moduleParams struct {
+    Module string `json:"module,omitempty"`
 	Bundle string `json:"bundle,omitempty"`
 	Key    string `json:"key,omitempty"`
 	Cert   string `json:"cert,omitempty"`
     Fed    string `json:"fed,omitempty"`
 }
 
-func runOpenInNamespaces(param []byte) string {
-	var params openModuleParams
+func runInNamespaces(param []byte) string {
+	var params moduleParams
 	err := json.Unmarshal(param, &params)
 	if err != nil {
 		return fmt.Sprintf("%d", int(unix.ENOSYS))
@@ -446,10 +444,8 @@ func OpenIdentityDocument() registry.HandlerFunc {
             fed = []byte("")
         }
 
-		params := openModuleParams{
-			Module: "open",
-			Path:   filename,
-			Flag:   uint32(req.Data.Args[1]),
+		params := moduleParams{
+            Module: "open",
             Bundle: string(bundle),
             Key:    string(key),
             Cert:   string(cert),

@@ -15,7 +15,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
     "os"
@@ -33,49 +32,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var _ = nsenter.RegisterModule("stat", runOpenInNamespaces)
-
-// in-memory data structure to keep track of for which process we have already requested certificates
-// TODO: need to deal with pid reuse
-
-type statModuleParams struct {
-	Module string `json:"module,omitempty"`
-	Path   string `json:"path,omitempty"`
-	Bundle string `json:"bundle,omitempty"`
-	Key    string `json:"key,omitempty"`
-	Cert   string `json:"cert,omitempty"`
-	Fed    string `json:"fed,omitempty"`
-}
-
-func runStatInNamespaces(param []byte) string {
-	var params statModuleParams
-	err := json.Unmarshal(param, &params)
-	if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-	}
-
-    err = os.WriteFile("/tmp/bundle.0.pem", []byte(params.Bundle), 0644)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-    err = os.WriteFile("/tmp/svid.0.pem", []byte(params.Cert), 0644)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-    err = os.WriteFile("/tmp/svid.0.key", []byte(params.Key), 0400)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-    err = os.WriteFile("/tmp/federated_bundle.0.0.pem", []byte(params.Fed), 0644)
-    if err != nil {
-		return fmt.Sprintf("%d", int(unix.ENOSYS))
-    }
-
-	return "0"
-}
+var _ = nsenter.RegisterModule("stat", runInNamespaces)
 
 func StatIdentityDocument() registry.HandlerFunc {
 
@@ -238,9 +195,8 @@ func StatIdentityDocument() registry.HandlerFunc {
             fed = []byte("")
         }
 
-		params := statModuleParams{
-			Module: "stat",
-			Path:   filename,
+		params := moduleParams{
+            Module: "stat",
             Bundle: string(bundle),
             Key:    string(key),
             Cert:   string(cert),
