@@ -3,7 +3,7 @@ GO_BUILD := go build
 
 IMAGE_TAG=$(shell ./tools/image-tag)
 IMAGE_BRANCH_TAG=$(shell ./tools/image-tag branch)
-CONTAINER_REPO ?= haih/spireseccompagent
+CONTAINER_REPO ?= docker.io/haih/spireseccompagent
 
 .PHONY: seccompagent
 seccompagent:
@@ -11,13 +11,13 @@ seccompagent:
 
 .PHONY: container-build
 container-build:
-	docker build -t $(CONTAINER_REPO):$(IMAGE_TAG) -f Dockerfile .
-	docker tag $(CONTAINER_REPO):$(IMAGE_TAG) $(CONTAINER_REPO):$(IMAGE_BRANCH_TAG)
+	podman build -t $(CONTAINER_REPO):$(IMAGE_TAG) -f Dockerfile .
+	podman tag $(CONTAINER_REPO):$(IMAGE_TAG) $(CONTAINER_REPO):$(IMAGE_BRANCH_TAG)
 
 .PHONY: container-push
 container-push:
-	docker push $(CONTAINER_REPO):$(IMAGE_TAG)
-	docker push $(CONTAINER_REPO):$(IMAGE_BRANCH_TAG)
+	podman push $(CONTAINER_REPO):$(IMAGE_TAG)
+	podman push $(CONTAINER_REPO):$(IMAGE_BRANCH_TAG)
 
 .PHONY: vendor
 vendor:
@@ -31,4 +31,4 @@ test:
 
 .PHONY: falco-plugin
 falco-plugin:
-	DOCKER_BUILDKIT=1 docker build -f falco-plugin/Dockerfile --output=falco-plugin/ .
+	DOCKER_BUILDKIT=1 podman build -f falco-plugin/Dockerfile --output=falco-plugin/ .

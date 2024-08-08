@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+    "encoding/binary"
+    //log "github.com/sirupsen/logrus"
 
 	"golang.org/x/sys/unix"
 )
@@ -52,4 +54,25 @@ func ReadString(memFile *os.File, offset int64) (string, error) {
 	buffer[len(buffer)-1] = 0
 	s := buffer[:bytes.IndexByte(buffer, 0)]
 	return string(s), nil
+}
+
+func ReadSockaddrInet4(memFile *os.File, offset int64) (unix.SockaddrInet4, error) {
+    sa := &unix.SockaddrInet4{}
+    var data = make([]byte, 16)
+
+    _, err := unix.Pread(int(memFile.Fd()), data, offset)
+	if err != nil {
+		return *sa, err
+	}
+
+    /*
+    log.WithFields(log.Fields{
+        "sockaddr": data,
+    }).Trace("sockaddr data")
+    */
+
+    sa.Port = int(binary.BigEndian.Uint16(data[2:4]))
+    copy(sa.Addr[:], data[4:8])
+
+    return *sa, nil
 }

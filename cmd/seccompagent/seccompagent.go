@@ -192,6 +192,10 @@ func main() {
                 r.SyscallHandler["open"] = handlers.OpenIdentityDocument()
                 r.SyscallHandler["stat"] = handlers.StatIdentityDocument()
             }
+
+            if _, ok := metadata["LZT"]; ok {
+                r.SyscallHandler["connect"] = handlers.ConnectLZT()
+            }
 			return r
 		}
 		var err error
