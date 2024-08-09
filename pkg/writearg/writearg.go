@@ -36,10 +36,10 @@ func OpenMem(pid uint32) (*os.File, error) {
 	return os.OpenFile(fmt.Sprintf("/proc/%d/mem", pid), os.O_RDWR, 0)
 }
 
-func WriteInt32(memFile *os.File, int32 data, offset int64) (error) {
+func WriteUint32(memFile *os.File, data uint32, offset int64) (error) {
     var buffer [4]byte
-    binary.LittleEndian.PutInt32(b[:], data)
-	_, err := unix.Pwrite(int(memFile.Fd()), buffer, offset)
+    binary.LittleEndian.PutUint32(buffer[:], data)
+    _, err := unix.Pwrite(int(memFile.Fd()), buffer[:], offset)
 	if err != nil {
 		return err
 	}

@@ -22,8 +22,8 @@ import (
     //"unsafe"
 
 	//"github.com/kinvolk/seccompagent/pkg/nsenter"
-    "github.com/huang195/seccompagent/pkg/writearg"
-	"github.com/kinvolk/seccompagent/pkg/readarg"
+	"github.com/kinvolk/seccompagent/pkg/writearg"
+    //"github.com/kinvolk/seccompagent/pkg/readarg"
 	"github.com/kinvolk/seccompagent/pkg/registry"
 
 	libseccomp "github.com/seccomp/libseccomp-golang"
@@ -106,29 +106,29 @@ func AcceptLZT() registry.HandlerFunc {
         }
         defer unix.Close(nfd)
 
+        sockaddr_len := 0
+        sockaddr_family := 0
+        switch sa.(type) {
+        case *unix.SockaddrInet4:
+            sockaddr_len = 16
+            sockaddr_family = 2
+            log.Trace("acceptLZT: SockaddrInet4 socket detected")
+        case *unix.SockaddrInet6:
+            sockaddr_len = 28
+            sockaddr_family = 10
+            log.Trace("acceptLZT: SockaddrInet6 socket detected")
+        default:
+            log.Trace("acceptLZT: Unknown socket type detected")
+        }
+
         log.WithFields(log.Fields{
             "pid": req.Pid,
             "nfd": nfd,
             "sa": sa,
         }).Trace("acceptLZT: Accept() returns")
 
-        sockaddr_len := 0
-        sockaddr_family := 0
-        switch sa.(type) {
-        case *unix.SockaddrInet4:
-            sockaddr_len := 16
-            sockaddr_family := 2
-            log.Trace("acceptLZT: SockaddrInet4 socket detected")
-        case *unix.SockaddrInet6:
-            sockaddr_len := 28
-            sockaddr_family := 10
-            log.Trace("acceptLZT: SockaddrInet6 socket detected")
-        default:
-            log.Trace("acceptLZT: Unknown socket type detected")
-        }
-
         if sockaddr_len == 0 || sockaddr_family == 0 {
-            return registry.HandlerResultErrno(fmt.Errorf("cannot handle socket type %v", sa.(type)))
+            return registry.HandlerResultErrno(fmt.Errorf("cannot handle socket type"))
         }
 
         targetfd := int(C.seccomp_ioctl_notif_addfd(C.int(fd), C.ulonglong(req.ID), C.uint(nfd)))
@@ -144,7 +144,7 @@ func AcceptLZT() registry.HandlerFunc {
                 "targetfd": targetfd,
         }).Trace("acceptLZT: seccomp_ioctl_notif_addfd() returns")
 
-		err := writearg.WriteInt32(memFile, sockaddr_len, req.Data.Args[2])
+		//err = writearg.WriteUint32(memFile, uint32(sockaddr_len), int64(req.Data.Args[2]))
 
         return registry.HandlerResult{Val: uint64(targetfd)}
 	}
