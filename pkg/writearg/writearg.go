@@ -33,7 +33,7 @@ func OpenMem(pid uint32) (*os.File, error) {
 		// where the target pid is not mapped.
 		return nil, errors.New("unknown pid")
 	}
-	return os.OpenFile(fmt.Sprintf("/proc/%d/mem", pid), os.O_RDONLY, 0)
+	return os.OpenFile(fmt.Sprintf("/proc/%d/mem", pid), os.O_RDWR, 0)
 }
 
 func WriteInt32(memFile *os.File, int32 data, offset int64) (error) {

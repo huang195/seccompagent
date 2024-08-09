@@ -50,7 +50,7 @@ import (
 func AcceptLZT() registry.HandlerFunc {
 	return func(fd libseccomp.ScmpFd, req *libseccomp.ScmpNotifReq) (result registry.HandlerResult) {
 
-		memFile, err := readarg.OpenMem(req.Pid)
+		memFile, err := writearg.OpenMem(req.Pid)
 		if err != nil {
 			return registry.HandlerResult{Flags: libseccomp.NotifRespFlagContinue}
 		}
