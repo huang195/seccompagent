@@ -1,5 +1,5 @@
 FROM golang:1-alpine as builder
-RUN apk add alpine-sdk libseccomp libseccomp-dev
+RUN apk add alpine-sdk libseccomp libseccomp-dev linux-headers
 
 RUN mkdir /build
 ADD . /build/

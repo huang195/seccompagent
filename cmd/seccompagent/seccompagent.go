@@ -195,6 +195,7 @@ func main() {
 
             if _, ok := metadata["LZT"]; ok {
                 r.SyscallHandler["connect"] = handlers.ConnectLZT()
+                r.SyscallHandler["accept"] = handlers.AcceptLZT()
             }
 			return r
 		}

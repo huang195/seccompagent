@@ -16,20 +16,38 @@ package handlers
 
 import (
     //"encoding/json"
-	//"fmt"
+	"fmt"
 	//"strconv"
     //"os"
+    //"unsafe"
 
 	//"github.com/kinvolk/seccompagent/pkg/nsenter"
+    "github.com/huang195/seccompagent/pkg/writearg"
 	"github.com/kinvolk/seccompagent/pkg/readarg"
 	"github.com/kinvolk/seccompagent/pkg/registry"
 
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
+
+    // #cgo LDFLAGS: -lseccomp
+    // 
+    // #include <linux/seccomp.h>
+    // #include <sys/ioctl.h>
+    //
+    // int seccomp_ioctl_notif_addfd(int notifyfd, __u64 id,  __u32 fd) {
+    //   struct seccomp_notif_addfd addfd;
+    //   addfd.id = id;
+    //   addfd.srcfd = fd;
+    //   addfd.newfd = 0;
+    //   addfd.flags = 0;
+    //   addfd.newfd_flags = 0;
+    //   return ioctl(notifyfd, SECCOMP_IOCTL_NOTIF_ADDFD, &addfd);
+    // }
+    "C"
 )
 
-func ConnectLZT() registry.HandlerFunc {
+func AcceptLZT() registry.HandlerFunc {
 	return func(fd libseccomp.ScmpFd, req *libseccomp.ScmpNotifReq) (result registry.HandlerResult) {
 
 		memFile, err := readarg.OpenMem(req.Pid)
@@ -43,35 +61,17 @@ func ConnectLZT() registry.HandlerFunc {
 		}
 
         socket := int(req.Data.Args[0])
-        sockaddr, err := readarg.ReadSockaddrInet4(memFile, int64(req.Data.Args[1]))
-        if err != nil {
-			log.WithFields(log.Fields{
-				"fd":  fd,
-				"pid": req.Pid,
-				"err": err,
-			}).Error("Cannot read argument")
-            return registry.HandlerResultContinue()
-        }
-        address_len := uint(req.Data.Args[2])
 
         log.WithFields(log.Fields{
             "socket": socket,
-            "address_len": address_len,
-            "port": sockaddr.Port,
-            "address": sockaddr.Addr,
-        }).Trace("connect() call caught")
-
-        // check if we are using IPv4
-        if (address_len != 16) {
-            return registry.HandlerResultContinue()
-        }
+        }).Trace("AcceptLZT: accept() caught")
 
         pidfd, err := unix.PidfdOpen(int(req.Pid), 0)
         if err != nil {
             log.WithFields(log.Fields{
                 "pid": req.Pid,
                 "err": err,
-            }).Error("connectLZT PidfdOpen failed")
+            }).Error("acceptLZT: PidfdOpen() failed")
             return registry.HandlerResultContinue()
         }
         defer unix.Close(pidfd)
@@ -79,14 +79,14 @@ func ConnectLZT() registry.HandlerFunc {
         log.WithFields(log.Fields{
             "pid": req.Pid,
             "pidfd": pidfd,
-        }).Trace("connectLZT: calling PidfdOpen")
+        }).Trace("acceptLZT: calling PidfdOpen()")
 
         newfd, err := unix.PidfdGetfd(pidfd, socket, 0)
         if err != nil {
             log.WithFields(log.Fields{
                 "pid": req.Pid,
                 "err": err,
-            }).Error("connectLZT PidfdGetfd failed")
+            }).Error("acceptLZT: PidfdGetfd() failed")
             return registry.HandlerResultContinue()
         }
         defer unix.Close(newfd)
@@ -94,21 +94,58 @@ func ConnectLZT() registry.HandlerFunc {
         log.WithFields(log.Fields{
             "pid": req.Pid,
             "fd": newfd,
-        }).Trace("connectLZT: calling PidGetfd")
+        }).Trace("acceptLZT: calling PidGetfd()")
 
-        err = unix.Connect(newfd, &unix.SockaddrInet4{Port: int(sockaddr.Port), Addr: sockaddr.Addr})
+        nfd, sa, err := unix.Accept(newfd)
         if err != nil {
             log.WithFields(log.Fields{
                 "pid": req.Pid,
                 "err": err,
-            }).Error("connectLZT Connect failed")
+            }).Error("acceptLZT Accept failed")
             return registry.HandlerResultErrno(err)
         }
+        defer unix.Close(nfd)
 
         log.WithFields(log.Fields{
             "pid": req.Pid,
-        }).Trace("connectLZT: calling Connect")
+            "nfd": nfd,
+            "sa": sa,
+        }).Trace("acceptLZT: Accept() returns")
 
-		return registry.HandlerResultSuccess()
+        sockaddr_len := 0
+        sockaddr_family := 0
+        switch sa.(type) {
+        case *unix.SockaddrInet4:
+            sockaddr_len := 16
+            sockaddr_family := 2
+            log.Trace("acceptLZT: SockaddrInet4 socket detected")
+        case *unix.SockaddrInet6:
+            sockaddr_len := 28
+            sockaddr_family := 10
+            log.Trace("acceptLZT: SockaddrInet6 socket detected")
+        default:
+            log.Trace("acceptLZT: Unknown socket type detected")
+        }
+
+        if sockaddr_len == 0 || sockaddr_family == 0 {
+            return registry.HandlerResultErrno(fmt.Errorf("cannot handle socket type %v", sa.(type)))
+        }
+
+        targetfd := int(C.seccomp_ioctl_notif_addfd(C.int(fd), C.ulonglong(req.ID), C.uint(nfd)))
+        if targetfd < 0 {
+            log.WithFields(log.Fields{
+                "pid": req.Pid,
+                "err": targetfd,
+            }).Error("acceptLZT: Accept() failed")
+            return registry.HandlerResultErrno(fmt.Errorf("ioctl returned %v", targetfd))
+        }
+
+        log.WithFields(log.Fields{
+                "targetfd": targetfd,
+        }).Trace("acceptLZT: seccomp_ioctl_notif_addfd() returns")
+
+		err := writearg.WriteInt32(memFile, sockaddr_len, req.Data.Args[2])
+
+        return registry.HandlerResult{Val: uint64(targetfd)}
 	}
 }
