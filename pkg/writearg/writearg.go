@@ -15,7 +15,7 @@
 package writearg
 
 import (
-	//"bytes"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -43,5 +43,20 @@ func WriteUint32(memFile *os.File, data uint32, offset int64) (error) {
 	if err != nil {
 		return err
 	}
+    return nil
+}
+
+func WriteRawSockaddrInet4(memFile *os.File, raw unix.RawSockaddrInet4, offset int64) (error) {
+
+    addrBuf := &bytes.Buffer{}
+    err := binary.Write(addrBuf, binary.NativeEndian, raw)
+    if err != nil {
+        return err
+    }
+    _, err = unix.Pwrite(int(memFile.Fd()), addrBuf.Bytes(), offset)
+    if err != nil {
+        return err
+    }
+
     return nil
 }

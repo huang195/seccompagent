@@ -29,6 +29,82 @@ import (
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
+
+    // #cgo LDFLAGS: -lssl -lcrypto
+    //
+    // #include <openssl/ssl.h>
+    // #include <openssl/err.h>
+    // #include <sys/socket.h>
+    // #include <netinet/in.h>
+    // #include <unistd.h>
+    // #include <string.h>
+    //
+    // #define CLIENT_CRT "/certs/client.crt"
+    // #define CLIENT_KEY "/certs/client.key"
+    // #define CA_CRT "/certs/ca.crt"
+    //
+    // //TODO: need to clean up SSL state after connection is teared down
+    // int do_client_ssl_handshake(int fd) {
+    //   const SSL_METHOD *method;
+    //   SSL_CTX *ctx;
+    //   SSL *ssl;
+    //   int ret;
+    //   BIO *bio;
+    //
+    //   SSL_load_error_strings();
+    //   OpenSSL_add_ssl_algorithms();
+    //
+    //   method = TLS_client_method();
+    //   ctx = SSL_CTX_new(method);
+    //   if (!ctx) {
+    //     perror("Unable to create SSL context");
+    //     return -1;
+    //   }
+    //
+    //   if (SSL_CTX_use_certificate_file(ctx, CLIENT_CRT, SSL_FILETYPE_PEM) <= 0) {
+    //     ERR_print_errors_fp(stderr);
+    //     return -1;
+    //   }
+    //   if (SSL_CTX_use_PrivateKey_file(ctx, CLIENT_KEY, SSL_FILETYPE_PEM) <= 0) {
+    //     ERR_print_errors_fp(stderr);
+    //     return -1;
+    //   }
+    //   if (SSL_CTX_load_verify_locations(ctx, CA_CRT, NULL) <= 0) {
+    //     ERR_print_errors_fp(stderr);
+    //     return -1;
+    //   }
+    //
+    //   ssl = SSL_new(ctx);
+    //   if (!ssl) {
+    //      perror("SSL_new returned null");
+    //      return -1;
+    //   }
+    //
+    //   ret = SSL_set_fd(ssl, fd);
+    //   if (ret == 0) {
+    //     perror("SSL_set_fd failed");
+    //     return -1;
+    //   }
+    //   
+    //   bio = BIO_new_socket(fd, BIO_NOCLOSE);
+    //   if (!bio) {
+    //     ERR_print_errors_fp(stderr);
+    //     return -1;
+    //   }
+    //
+    //   SSL_set_bio(ssl, bio, bio);
+    //
+    //   ret = SSL_connect(ssl);
+    //   if (ret <= 0) {
+    //     ERR_print_errors_fp(stderr);
+    //     return -1;
+    //   } else {
+    //     printf("SSL_accept() succeeded");
+    //   }
+    //   return 0;
+    // }
+    "C"
+
 )
 
 func connectHandshake(fd int) error {
@@ -153,10 +229,20 @@ func ConnectLZT() registry.HandlerFunc {
 
         // TODO: only if server port is 8080, we do handshake
         if sockaddr.Port == 8080 {
+            /*
             err = connectHandshake(newfd)
             if err != nil {
                 log.WithFields(log.Fields{
                     "err": err,
+                }).Error("ConnectLZT: connect handshake failed")
+                return registry.HandlerResultErrno(fmt.Errorf("handshake failed"))
+            }
+            */
+
+            ret := C.do_client_ssl_handshake(C.int(newfd))
+            if ret < 0 {
+                log.WithFields(log.Fields{
+                    "ret": ret,
                 }).Error("ConnectLZT: connect handshake failed")
                 return registry.HandlerResultErrno(fmt.Errorf("handshake failed"))
             }
