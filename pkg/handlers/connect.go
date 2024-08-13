@@ -16,9 +16,11 @@ package handlers
 
 import (
     //"encoding/json"
-	//"fmt"
+	"fmt"
 	//"strconv"
     //"os"
+    //"net"
+    "syscall"
 
 	//"github.com/kinvolk/seccompagent/pkg/nsenter"
 	"github.com/kinvolk/seccompagent/pkg/readarg"
@@ -28,6 +30,35 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
+
+func connectHandshake(fd int) error {
+
+    log.WithFields(log.Fields{
+        "fd": fd,
+    }).Trace("connectHandshake: write to the socket")
+
+    _, err := syscall.Write(fd, []byte("*** handshake from the client ***"))
+    if err != nil {
+        return err
+    }
+
+    log.WithFields(log.Fields{
+        "fd": fd,
+    }).Trace("connectHandshake: read from the socket")
+
+    buf := make([]byte, 1024)
+    n, err := syscall.Read(fd, buf)
+    if err != nil {
+        return err
+    }
+
+    log.WithFields(log.Fields{
+        "fd": fd,
+        "message": string(buf[:n]),
+    }).Trace("connectHandshake: server message received")
+
+    return nil
+}
 
 func ConnectLZT() registry.HandlerFunc {
 	return func(fd libseccomp.ScmpFd, req *libseccomp.ScmpNotifReq) (result registry.HandlerResult) {
@@ -71,7 +102,7 @@ func ConnectLZT() registry.HandlerFunc {
             log.WithFields(log.Fields{
                 "pid": req.Pid,
                 "err": err,
-            }).Error("connectLZT PidfdOpen failed")
+            }).Error("ConnectLZT: PidfdOpen() failed")
             return registry.HandlerResultContinue()
         }
         defer unix.Close(pidfd)
@@ -79,14 +110,14 @@ func ConnectLZT() registry.HandlerFunc {
         log.WithFields(log.Fields{
             "pid": req.Pid,
             "pidfd": pidfd,
-        }).Trace("connectLZT: calling PidfdOpen")
+        }).Trace("ConnectLZT: PidfdOpen() returned")
 
         newfd, err := unix.PidfdGetfd(pidfd, socket, 0)
         if err != nil {
             log.WithFields(log.Fields{
                 "pid": req.Pid,
                 "err": err,
-            }).Error("connectLZT PidfdGetfd failed")
+            }).Error("ConnectLZT: PidfdGetfd() failed")
             return registry.HandlerResultContinue()
         }
         defer unix.Close(newfd)
@@ -94,20 +125,40 @@ func ConnectLZT() registry.HandlerFunc {
         log.WithFields(log.Fields{
             "pid": req.Pid,
             "fd": newfd,
-        }).Trace("connectLZT: calling PidGetfd")
+        }).Trace("ConnectLZT: PidfdGetfd() returned")
+
+        err = unix.SetNonblock(newfd, false)
+        if err != nil {
+            log.WithFields(log.Fields{
+                "pid": req.Pid,
+                "err": err,
+            }).Error("ConnectLZT: SetNonblocking() failed")
+            return registry.HandlerResultErrno(err)
+        }
 
         err = unix.Connect(newfd, &unix.SockaddrInet4{Port: int(sockaddr.Port), Addr: sockaddr.Addr})
         if err != nil {
             log.WithFields(log.Fields{
                 "pid": req.Pid,
                 "err": err,
-            }).Error("connectLZT Connect failed")
+            }).Error("ConnectLZT: Connect() failed")
             return registry.HandlerResultErrno(err)
         }
 
         log.WithFields(log.Fields{
             "pid": req.Pid,
-        }).Trace("connectLZT: calling Connect")
+        }).Trace("ConnectLZT: Connect() returned")
+
+        // TODO: only if server port is 8080, we do handshake
+        if sockaddr.Port == 8080 {
+            err = connectHandshake(newfd)
+            if err != nil {
+                log.WithFields(log.Fields{
+                    "err": err,
+                }).Error("ConnectLZT: connect handshake failed")
+                return registry.HandlerResultErrno(fmt.Errorf("handshake failed"))
+            }
+        }
 
 		return registry.HandlerResultSuccess()
 	}
