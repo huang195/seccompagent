@@ -127,6 +127,7 @@ func ConnectLZT() registry.HandlerFunc {
             "fd": newfd,
         }).Trace("ConnectLZT: PidfdGetfd() returned")
 
+        /*
         err = unix.SetNonblock(newfd, false)
         if err != nil {
             log.WithFields(log.Fields{
@@ -135,6 +136,7 @@ func ConnectLZT() registry.HandlerFunc {
             }).Error("ConnectLZT: SetNonblocking() failed")
             return registry.HandlerResultErrno(err)
         }
+        */
 
         err = unix.Connect(newfd, &unix.SockaddrInet4{Port: int(sockaddr.Port), Addr: sockaddr.Addr})
         if err != nil {
