@@ -77,7 +77,7 @@ func parseStateFds(stateFds []string, recvFds []int) (uintptr, error) {
 }
 
 func receiveNewSeccompFile(resolver registry.ResolverFunc, sockfd int) (*registry.Registry, *os.File, error) {
-	MaxNameLen := 4096
+	MaxNameLen := 40960
 
 	// File descriptors over SCM_RIGHTS are 'int' according to "man cmsg".
 	// The unix golang package assumes that a file descriptor is a int32, see:
@@ -85,7 +85,7 @@ func receiveNewSeccompFile(resolver registry.ResolverFunc, sockfd int) (*registr
 	// On Linux and Windows, `int` is always 32 bits, so it's fine:
 	// https://en.wikipedia.org/wiki/64-bit_computing#64-bit_data_models
 	oobSpace := unix.CmsgSpace(4)
-	stateBuf := make([]byte, 4096)
+	stateBuf := make([]byte, 40960)
 	oob := make([]byte, oobSpace)
 
 	// TODO: use conn.ReadMsgUnix() instead of unix.Recvmsg().
