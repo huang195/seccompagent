@@ -14,6 +14,10 @@ container-build:
 	podman build -t $(CONTAINER_REPO):$(IMAGE_TAG) -f Dockerfile .
 	podman tag $(CONTAINER_REPO):$(IMAGE_TAG) $(CONTAINER_REPO):$(IMAGE_BRANCH_TAG)
 
+pprof-build:
+	podman build -t $(CONTAINER_REPO):$(IMAGE_TAG) -f Dockerfile.pprof .
+	podman tag $(CONTAINER_REPO):$(IMAGE_TAG) $(CONTAINER_REPO):$(IMAGE_BRANCH_TAG)
+
 .PHONY: container-push
 container-push:
 	podman push $(CONTAINER_REPO):$(IMAGE_TAG)
