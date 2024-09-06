@@ -47,7 +47,7 @@ func StatIdentityDocument() registry.HandlerFunc {
     }
 
     // TODO: we're hardcoding the cgroup path here, need a better way
-    myCgroupProcPath := fmt.Sprintf("/sys/fs/cgroup/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-besteffort.slice/kubelet-kubepods-besteffort-pod%s.slice/cri-containerd-%s.scope/cgroup.procs", myPodUID, myContainerID)
+    myCgroupProcPath := fmt.Sprintf(CgroupPathTemplateSystemd, myPodUID, myContainerID)
 
     log.WithFields(log.Fields{
         "pod": myPodUID,
@@ -92,9 +92,11 @@ func StatIdentityDocument() registry.HandlerFunc {
         }
 
         // do nothing if we have already handled certificate retrival for this pid
+        /*
         if _, ok := pidMap[podUID]; ok {
             return registry.HandlerResultContinue()
         }
+        */
 
         // TODO: we currently only monitor for X509 key/cert files in PEM format and in
         // these file extensions. JWT and X509 DER support can be added later
@@ -108,7 +110,7 @@ func StatIdentityDocument() registry.HandlerFunc {
         }
 
         // TODO: we're hardcoding the cgroup path here, need a better way
-        cgroupProcPath := fmt.Sprintf("/sys/fs/cgroup/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-besteffort.slice/kubelet-kubepods-besteffort-pod%s.slice/cri-containerd-%s.scope/cgroup.procs", podUID, containerID)
+        cgroupProcPath := fmt.Sprintf(CgroupPathTemplateSystemd, podUID, containerID)
 
         log.WithFields(log.Fields{
             "pod": podUID,
@@ -133,7 +135,7 @@ func StatIdentityDocument() registry.HandlerFunc {
         }
 
         // Call spire-agent to retrieve certificate while within the workload's cgroup
-        cmd := exec.Command("/bin/spire-agent", "api", "fetch", "-socketPath", "/run/spire/sockets/agent.sock", "-write", "/tmp")
+        cmd := exec.Command("/bin/spire-agent", "api", "fetch", "-socketPath", "/run/spire/agent-sockets/spire-agent.sock", "-write", "/tmp")
         stdoutStderr, err := cmd.CombinedOutput()
         if err != nil {
 			log.WithFields(log.Fields{
