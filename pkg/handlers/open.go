@@ -21,22 +21,25 @@ import (
     "os"
     "os/exec"
     //"time"
-    "bufio"
+    //"bufio"
     "strings"
-    "regexp"
-    "unicode"
+    //"regexp"
+    //"unicode"
+    "io"
     "io/ioutil"
-
+    "path/filepath"
 
 	"github.com/kinvolk/seccompagent/pkg/nsenter"
 	"github.com/kinvolk/seccompagent/pkg/readarg"
 	"github.com/kinvolk/seccompagent/pkg/registry"
 
-    "k8s.io/apimachinery/pkg/types"
+    //"k8s.io/apimachinery/pkg/types"
 
 	libseccomp "github.com/seccomp/libseccomp-golang"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
+
+    "github.com/spiffe/spire/pkg/agent/common/cgroups"
 )
 
 const (
@@ -90,203 +93,45 @@ func runInNamespaces(param []byte) string {
 	return "0"
 }
 
-// Cgroup represents a linux cgroup.
-type Cgroup struct {
-    HierarchyID    string
-    ControllerList string
-    GroupPath      string
-}
-
-// GetCGroups returns a slice of cgroups for pid using fs for filesystem calls.
-//
-// The expected cgroup format is "hierarchy-ID:controller-list:cgroup-path", and
-// this function will return an error if every cgroup does not meet that format.
-//
-// For more information, see:
-//   - http://man7.org/linux/man-pages/man7/cgroups.7.html
-//   - https://www.kernel.org/doc/Documentation/cgroup-v2.txt
-func GetCgroups(pid int32) ([]Cgroup, error) {
-    path := fmt.Sprintf("/proc/%v/cgroup", pid)
-    file, err := os.Open(path)
-    if err != nil {
-        return nil, err
-    }
-    defer file.Close()
-
-    var cgroups []Cgroup
-    scanner := bufio.NewScanner(file)
-
-    for scanner.Scan() {
-        token := scanner.Text()
-        substrings := strings.SplitN(token, ":", 3)
-        if len(substrings) < 3 {
-            return nil, fmt.Errorf("cgroup entry contains %v colons, but expected at least 2 colons: %q", len(substrings), token)
-        }
-        cgroups = append(cgroups, Cgroup{
-            HierarchyID:    substrings[0],
-            ControllerList: substrings[1],
-            GroupPath:      substrings[2],
-        })
-    }
-
-    if err := scanner.Err(); err != nil {
-        return nil, err
-    }
-
-    return cgroups, nil
-}
-
-// regexes listed here have to exclusively match a cgroup path
-// the regexes must include two named groups "poduid" and "containerid"
-// if the regex needs to exclude certain substrings, the "mustnotmatch" group can be used
-var cgroupREs = []*regexp.Regexp{
-    // the regex used to parse out the pod UID and container ID from a
-    // cgroup name. It assumes that any ".scope" suffix has been trimmed off
-    // beforehand.  CAUTION: we used to verify that the pod and container id were
-    // descendants of a kubepods directory, however, as of Kubernetes 1.21, cgroups
-    // namespaces are in use and therefore we can no longer discern if that is the
-    // case from within SPIRE agent container (since the container itself is
-    // namespaced). As such, the regex has been relaxed to simply find the pod UID
-    // followed by the container ID with allowances for arbitrary punctuation, and
-    // container runtime prefixes, etc.
-    regexp.MustCompile(`` +
-        // "pod"-prefixed Pod UID (with punctuation separated groups) followed by punctuation
-        `[[:punct:]]pod(?P<poduid>[[:xdigit:]]{8}[[:punct:]]?[[:xdigit:]]{4}[[:punct:]]?[[:xdigit:]]{4}[[:punct:]]?[[:xdigit:]]{4}[[:punct:]]?[[:xdigit:]]{12})[[:punct:]]` +
-        // zero or more punctuation separated "segments" (e.g. "docker-")
-        `(?:[[:^punct:]]+[[:punct:]])*` +
-        // non-punctuation end of string, i.e., the container ID
-        `(?P<containerid>[[:^punct:]]+)$`),
-
-    // This regex applies for container runtimes, that won't put the PodUID into
-    // the cgroup name.
-    // Currently only cri-o in combination with kubeedge is known for this abnormally.
-    regexp.MustCompile(`` +
-        // intentionally empty poduid group
-        `(?P<poduid>)` +
-        // mustnotmatch group: cgroup path must not include a poduid
-        `(?P<mustnotmatch>pod[[:xdigit:]]{8}[[:punct:]]?[[:xdigit:]]{4}[[:punct:]]?[[:xdigit:]]{4}[[:punct:]]?[[:xdigit:]]{4}[[:punct:]]?[[:xdigit:]]{12}[[:punct:]])?` +
-        // /crio-
-        `(?:[[:^punct:]]*/*)*crio[[:punct:]]` +
-        // non-punctuation end of string, i.e., the container ID
-        `(?P<containerid>[[:^punct:]]+)$`),
-}
-
-func reSubMatchMap(r *regexp.Regexp, str string) map[string]string {
-    match := r.FindStringSubmatch(str)
-    if match == nil {
-        return nil
-    }
-    subMatchMap := make(map[string]string)
-    for i, name := range r.SubexpNames() {
-        if i != 0 {
-            subMatchMap[name] = match[i]
-        }
-    }
-    return subMatchMap
-}
-
-func isValidCGroupPathMatches(matches map[string]string) bool {
-    if matches == nil {
-        return false
-    }
-    if matches["mustnotmatch"] != "" {
-        return false
-    }
-    return true
-}
-
-// canonicalizePodUID converts a Pod UID, as represented in a cgroup path, into
-// a canonical form. Practically this means that we convert any punctuation to
-// dashes, which is how the UID is represented within Kubernetes.
-func canonicalizePodUID(uid string) types.UID {
-    return types.UID(strings.Map(func(r rune) rune {
-        if unicode.IsPunct(r) {
-            r = '-'
-        }
-        return r
-    }, uid))
-}
-
-func getPodUIDAndContainerIDFromCGroupPath(cgroupPath string) (string, string, bool) {
-    // We are only interested in kube pods entries, for example:
-    // - /kubepods/burstable/pod2c48913c-b29f-11e7-9350-020968147796/9bca8d63d5fa610783847915bcff0ecac1273e5b4bed3f6fa1b07350e0135961
-    // - /docker/8d461fa5765781bcf5f7eb192f101bc3103d4b932e26236f43feecfa20664f96/kubepods/besteffort/poddaa5c7ee-3484-4533-af39-3591564fd03e/aff34703e5e1f89443e9a1bffcc80f43f74d4808a2dd22c8f88c08547b323934
-    // - /kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod2c48913c-b29f-11e7-9350-020968147796.slice/docker-9bca8d63d5fa610783847915bcff0ecac1273e5b4bed3f6fa1b07350e0135961.scope
-    // - /kubepods-besteffort-pod72f7f152_440c_66ac_9084_e0fc1d8a910c.slice:cri-containerd:b2a102854b4969b2ce98dc329c86b4fb2b06e4ad2cc8da9d8a7578c9cd2004a2"
-    // - /../../pod2c48913c-b29f-11e7-9350-020968147796/9bca8d63d5fa610783847915bcff0ecac1273e5b4bed3f6fa1b07350e0135961
-    // - 0::/../crio-45490e76e0878aaa4d9808f7d2eefba37f093c3efbba9838b6d8ab804d9bd814.scope
-    // First trim off any .scope suffix. This allows for a cleaner regex since
-    // we don't have to muck with greediness. TrimSuffix is no-copy so this
-    // is cheap.
-    cgroupPath = strings.TrimSuffix(cgroupPath, ".scope")
-
-    var matchResults map[string]string
-    for _, regex := range cgroupREs {
-        matches := reSubMatchMap(regex, cgroupPath)
-        if isValidCGroupPathMatches(matches) {
-            if matchResults != nil {
-                log.Printf("More than one regex matches for cgroup %s", cgroupPath)
-                return "", "", false
-            }
-            matchResults = matches
-        }
-    }
-
-    if matchResults != nil {
-        var podUID string
-        if matchResults["poduid"] != "" {
-            //podUID = canonicalizePodUID(matchResults["poduid"])
-            podUID = matchResults["poduid"]
-        }
-        return podUID, matchResults["containerid"], true
-    }
-    return "", "", false
-}
-
-func getPodUIDAndContainerIDFromCGroups(cgroups []Cgroup) (string, string, error) {
-    var podUID string
-    var containerID string
-    for _, cgroup := range cgroups {
-        candidatePodUID, candidateContainerID, ok := getPodUIDAndContainerIDFromCGroupPath(cgroup.GroupPath)
-        switch {
-        case !ok:
-            // Cgroup did not contain a container ID.
-            continue
-        case containerID == "":
-            // This is the first container ID found so far.
-            podUID = candidatePodUID
-            containerID = candidateContainerID
-        case containerID != candidateContainerID:
-            // More than one container ID found in the cgroups.
-            return "", "", fmt.Errorf("multiple container IDs found in cgroups (%s, %s)",
-                containerID, candidateContainerID)
-        case podUID != candidatePodUID:
-            // More than one pod UID found in the cgroups.
-            return "", "", fmt.Errorf("multiple pod UIDs found in cgroups (%s, %s)",
-                podUID, candidatePodUID)
-        }
-    }
-
-    return podUID, containerID, nil
-}
-
-func GetPodUIDAndContainerID(pID int32) (string, string, error) {
-    cgroups, err := GetCgroups(pID)
-    if err != nil {
-        return "", "", fmt.Errorf("unable to obtain cgroups: %v", err)
-    }
-
-    return getPodUIDAndContainerIDFromCGroups(cgroups)
-}
-
-func EnterCgroup(path string, pid int) error {
-    err := ioutil.WriteFile(path, []byte(strconv.Itoa(pid)), 0644)
+//TODO: need to deal with partial failures - how to take us back to the original cgroups
+func EnterCgroup(sourcePID int32, targetPID int32) error {
+    cgroups, err := cgroups.GetCgroups(targetPID, dirFS("/"))
     if err != nil {
         log.WithFields(log.Fields{
-            "cgroup.procs": path,
+            "sourcePID": sourcePID,
+            "targetPID": targetPID,
             "err": err,
-        }).Error("Cannot join cgroup")
-        return fmt.Errorf("Cannot join cgroup")
+        }).Error("Cannot find cgroup")
+        return err
+    }
+
+    for _, cgroup := range cgroups {
+        controllerList := cgroup.ControllerList
+        groupPath := cgroup.GroupPath
+
+        // deal with entries like "1:name=systemd:/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod716f46c3_4f60_4d5b_ba75_d490d2f6606e.slice/crio-e316ba35da8609397348f35ef95e6671775d595c43a661a8153b119dd2d51d63.scope"
+        substrings := strings.SplitN(controllerList, "=", 2)
+        if len(substrings) == 2 {
+            controllerList= substrings[1]
+        }
+
+        log.WithFields(log.Fields{
+            "controllerList": controllerList,
+            "groupPath": groupPath,
+            "pid": targetPID,
+        }).Trace("EnterCgroup()")
+
+        // e.g., path=/sys/fs/cgroup/systemd/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod716f46c3_4f60_4d5b_ba75_d490d2f6606e.slice/crio-e316ba35da8609397348f35ef95e6671775d595c43a661a8153b119dd2d51d63.scope/cgroup.procs
+        path := fmt.Sprintf("/sys/fs/cgroup/%s%s/cgroup.procs", controllerList, groupPath)
+
+        err := ioutil.WriteFile(path, []byte(strconv.Itoa(int(targetPID))), 0644)
+        if err != nil {
+            log.WithFields(log.Fields{
+                "path": path,
+                "err": err,
+            }).Error("Cannot join cgroup")
+            return err
+        }
     }
     return nil
 }
@@ -295,22 +140,9 @@ func OpenIdentityDocument() registry.HandlerFunc {
 
     // Getting our own pid to find our cgroup
     myPID := os.Getpid()
-    myPodUID, myContainerID, err := GetPodUIDAndContainerID(int32(myPID))
-    if err != nil {
-        log.WithFields(log.Fields{
-            "err": err,
-        }).Error("Cannot retrieve pod and container ID")
-        return nil
-    }
-
-    // TODO: we're hardcoding the cgroup path here, need a better way
-    myCgroupProcPath := fmt.Sprintf(CgroupPathTemplateSystemd, myPodUID, myContainerID)
-
     log.WithFields(log.Fields{
-        "pod": myPodUID,
-        "container": myContainerID,
-        "cgroup.procs": myCgroupProcPath,
-    }).Trace("Successfully retrieved our own pod and container ID")
+        "myPID": myPID,
+    }).Trace("OpenIdentityDocument()")
 
 	return func(fd libseccomp.ScmpFd, req *libseccomp.ScmpNotifReq) (result registry.HandlerResult) {
         // Step 1: Masquerade as the workload by jumping to its cgroup
@@ -338,21 +170,6 @@ func OpenIdentityDocument() registry.HandlerFunc {
             "filename":  filename,
         }).Trace("open()")
 
-        podUID, containerID, err := GetPodUIDAndContainerID(int32(req.Pid))
-        if err != nil {
-			log.WithFields(log.Fields{
-				"fd":  fd,
-				"pid": req.Pid,
-				"err": err,
-			}).Error("Cannot retrieve pod and container ID")
-            return registry.HandlerResultContinue()
-        }
-
-        // do nothing if we have already handled certificate retrival for this pid
-        if _, ok := pidMap[podUID]; ok {
-            return registry.HandlerResultContinue()
-        }
-
         // TODO: we currently only monitor for X509 key/cert files in PEM format and in
         // these file extensions. JWT and X509 DER support can be added later
         if !strings.HasSuffix(filename, ".crt") && !strings.HasSuffix(filename, ".pem") &&
@@ -364,15 +181,6 @@ func OpenIdentityDocument() registry.HandlerFunc {
             return registry.HandlerResultContinue()
         }
 
-        // TODO: we're hardcoding the cgroup path here, need a better way
-        cgroupProcPath := fmt.Sprintf(CgroupPathTemplateSystemd, podUID, containerID)
-
-        log.WithFields(log.Fields{
-            "pod": podUID,
-            "container": containerID,
-            "cgroup.procs": cgroupProcPath,
-        }).Trace("Successfully retrieved pod and container ID")
-
         // Before we can move ourselves to the workload's cgroup, we need to create a dummy thread to hold on to our current cgroup so it doesn't get cleaned up
         sleepCmd := exec.Command("sleep", "infinity")
         err = sleepCmd.Start()
@@ -383,8 +191,10 @@ func OpenIdentityDocument() registry.HandlerFunc {
             return registry.HandlerResultContinue()
         }
 
+        sleepPID := sleepCmd.Process.Pid
+
         // Enter workload's cgroup
-        err = EnterCgroup(cgroupProcPath, myPID)
+        err = EnterCgroup(int32(myPID), int32(req.Pid))
         if err != nil {
             return registry.HandlerResultContinue()
         }
@@ -397,12 +207,12 @@ func OpenIdentityDocument() registry.HandlerFunc {
 				"err": err,
                 "output": stdoutStderr,
 			}).Error("Call to spire-agent failed")
-            EnterCgroup(myCgroupProcPath, myPID)
+            EnterCgroup(int32(myPID), int32(sleepPID))
             return registry.HandlerResultContinue()
         }
 
         // Put us back to the original cgroup
-        err = EnterCgroup(myCgroupProcPath, myPID)
+        err = EnterCgroup(int32(myPID), int32(sleepPID))
         if err != nil {
             sleepCmd.Process.Kill()
             return registry.HandlerResultContinue()
@@ -529,10 +339,13 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.Errno(errno))
 		}
 
-        //TODO: clean up Pid from pidMap when process is terminated
-        pidMap[podUID] = 1
-
 		//return registry.HandlerResultSuccess()
         return registry.HandlerResultContinue()
 	}
+}
+
+type dirFS string
+
+func (d dirFS) Open(p string) (io.ReadCloser, error) {
+    return os.Open(filepath.Join(string(d), p))
 }

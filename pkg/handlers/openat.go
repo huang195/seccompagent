@@ -15,7 +15,7 @@
 package handlers
 
 import (
-	"fmt"
+	//"fmt"
 	"strconv"
     "os"
     "os/exec"
@@ -38,22 +38,9 @@ func OpenatIdentityDocument() registry.HandlerFunc {
 
     // Getting our own pid to find our cgroup
     myPID := os.Getpid()
-    myPodUID, myContainerID, err := GetPodUIDAndContainerID(int32(myPID))
-    if err != nil {
-        log.WithFields(log.Fields{
-            "err": err,
-        }).Error("Cannot retrieve pod and container ID")
-        return nil
-    }
-
-    // TODO: we're hardcoding the cgroup path here, need a better way
-    myCgroupProcPath := fmt.Sprintf(CgroupPathTemplateSystemd, myPodUID, myContainerID)
-
     log.WithFields(log.Fields{
-        "pod": myPodUID,
-        "container": myContainerID,
-        "cgroup.procs": myCgroupProcPath,
-    }).Trace("Successfully retrieved our own pod and container ID")
+        "myPID": myPID,
+    }).Trace("OpenatIdentityDocument()")
 
 	return func(fd libseccomp.ScmpFd, req *libseccomp.ScmpNotifReq) (result registry.HandlerResult) {
         // Step 1: Masquerade as the workload by jumping to its cgroup
@@ -81,23 +68,6 @@ func OpenatIdentityDocument() registry.HandlerFunc {
             "filename":  filename,
         }).Trace("openat()")
 
-        podUID, containerID, err := GetPodUIDAndContainerID(int32(req.Pid))
-        if err != nil {
-			log.WithFields(log.Fields{
-				"fd":  fd,
-				"pid": req.Pid,
-				"err": err,
-			}).Error("Cannot retrieve pod and container ID")
-            return registry.HandlerResultContinue()
-        }
-
-        // do nothing if we have already handled certificate retrival for this pid
-        /*
-        if _, ok := pidMap[podUID]; ok {
-            return registry.HandlerResultContinue()
-        }
-        */
-
         // TODO: we currently only monitor for X509 key/cert files in PEM format and in
         // these file extensions. JWT and X509 DER support can be added later
         if !strings.HasSuffix(filename, ".crt") && !strings.HasSuffix(filename, ".pem") &&
@@ -109,15 +79,6 @@ func OpenatIdentityDocument() registry.HandlerFunc {
             return registry.HandlerResultContinue()
         }
 
-        // TODO: we're hardcoding the cgroup path here, need a better way
-        cgroupProcPath := fmt.Sprintf(CgroupPathTemplateSystemd, podUID, containerID)
-
-        log.WithFields(log.Fields{
-            "pod": podUID,
-            "container": containerID,
-            "cgroup.procs": cgroupProcPath,
-        }).Trace("Successfully retrieved pod and container ID")
-
         // Before we can move ourselves to the workload's cgroup, we need to create a dummy thread to hold on to our current cgroup so it doesn't get cleaned up
         sleepCmd := exec.Command("sleep", "infinity")
         err = sleepCmd.Start()
@@ -128,8 +89,10 @@ func OpenatIdentityDocument() registry.HandlerFunc {
             return registry.HandlerResultContinue()
         }
 
+        sleepPID := sleepCmd.Process.Pid
+
         // Enter workload's cgroup
-        err = EnterCgroup(cgroupProcPath, myPID)
+        err = EnterCgroup(int32(myPID), int32(req.Pid))
         if err != nil {
             return registry.HandlerResultContinue()
         }
@@ -142,12 +105,12 @@ func OpenatIdentityDocument() registry.HandlerFunc {
 				"err": err,
                 "output": stdoutStderr,
 			}).Error("Call to spire-agent failed")
-            EnterCgroup(myCgroupProcPath, myPID)
+            EnterCgroup(int32(myPID), int32(sleepPID))
             return registry.HandlerResultContinue()
         }
 
         // Put us back to the original cgroup
-        err = EnterCgroup(myCgroupProcPath, myPID)
+        err = EnterCgroup(int32(myPID), int32(sleepPID))
         if err != nil {
             sleepCmd.Process.Kill()
             return registry.HandlerResultContinue()
@@ -273,9 +236,6 @@ func OpenatIdentityDocument() registry.HandlerFunc {
 			}).Error("Errno is non-zero")
 			return registry.HandlerResultErrno(unix.Errno(errno))
 		}
-
-        //TODO: clean up Pid from pidMap when process is terminated
-        pidMap[podUID] = 1
 
 		//return registry.HandlerResultSuccess()
         return registry.HandlerResultContinue()
