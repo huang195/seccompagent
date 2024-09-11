@@ -65,6 +65,7 @@ func StatIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.EFAULT)
 		}
         log.WithFields(log.Fields{
+            "req.Pid": req.Pid,
             "filename":  filename,
         }).Trace("stat()")
 
@@ -99,6 +100,7 @@ func StatIdentityDocument() registry.HandlerFunc {
 
         // Call spire-agent to retrieve certificate while within the workload's cgroup
         cmd := exec.Command("/bin/spire-agent", "api", "fetch", "-socketPath", "/run/spire/agent-sockets/spire-agent.sock", "-write", "/tmp")
+        //cmd := exec.Command("/bin/spire-agent", "api", "fetch", "-socketPath", "/run/spire/sockets/agent.sock", "-write", "/tmp")
         stdoutStderr, err := cmd.CombinedOutput()
         if err != nil {
 			log.WithFields(log.Fields{

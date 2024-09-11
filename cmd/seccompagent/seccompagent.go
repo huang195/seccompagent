@@ -36,8 +36,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 
-    _ "net/http/pprof"
-    "net/http"
+    //_ "net/http/pprof"
+    //"net/http"
 )
 
 var (
@@ -53,9 +53,11 @@ func init() {
 }
 
 func main() {
+    /*
     go func() {
         log.Println(http.ListenAndServe("localhost:6060", nil))
     }()
+    */
 
 	nsenter.Init()
 

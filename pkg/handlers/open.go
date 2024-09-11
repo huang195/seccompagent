@@ -26,7 +26,6 @@ import (
     //"regexp"
     //"unicode"
     "io"
-    "io/ioutil"
     "path/filepath"
 
 	"github.com/kinvolk/seccompagent/pkg/nsenter"
@@ -118,13 +117,27 @@ func EnterCgroup(sourcePID int32, targetPID int32) error {
         log.WithFields(log.Fields{
             "controllerList": controllerList,
             "groupPath": groupPath,
-            "pid": targetPID,
+            "sourcePID": sourcePID,
+            "targetPID": targetPID,
         }).Trace("EnterCgroup()")
 
         // e.g., path=/sys/fs/cgroup/systemd/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod716f46c3_4f60_4d5b_ba75_d490d2f6606e.slice/crio-e316ba35da8609397348f35ef95e6671775d595c43a661a8153b119dd2d51d63.scope/cgroup.procs
         path := fmt.Sprintf("/sys/fs/cgroup/%s%s/cgroup.procs", controllerList, groupPath)
 
-        err := ioutil.WriteFile(path, []byte(strconv.Itoa(int(targetPID))), 0644)
+        data, err := os.ReadFile(path)
+        if err != nil {
+            log.WithFields(log.Fields{
+                "path": path,
+                "err": err,
+            }).Error("Cannot read cgroup file")
+            return err
+        }
+
+        log.WithFields(log.Fields{
+            "cgroup.procs": string(data),
+        }).Trace("Read cgroup file (before)")
+
+        err = os.WriteFile(path, []byte(strconv.Itoa(int(sourcePID))), 0644)
         if err != nil {
             log.WithFields(log.Fields{
                 "path": path,
@@ -132,6 +145,19 @@ func EnterCgroup(sourcePID int32, targetPID int32) error {
             }).Error("Cannot join cgroup")
             return err
         }
+
+        data, err = os.ReadFile(path)
+        if err != nil {
+            log.WithFields(log.Fields{
+                "path": path,
+                "err": err,
+            }).Error("Cannot read cgroup file")
+            return err
+        }
+
+        log.WithFields(log.Fields{
+            "cgroup.procs": string(data),
+        }).Trace("Read cgroup file (after)")
     }
     return nil
 }
@@ -167,6 +193,7 @@ func OpenIdentityDocument() registry.HandlerFunc {
 			return registry.HandlerResultErrno(unix.EFAULT)
 		}
         log.WithFields(log.Fields{
+            "req.Pid": req.Pid,
             "filename":  filename,
         }).Trace("open()")
 
@@ -201,11 +228,12 @@ func OpenIdentityDocument() registry.HandlerFunc {
 
         // Call spire-agent to retrieve certificate while within the workload's cgroup
         cmd := exec.Command("/bin/spire-agent", "api", "fetch", "-socketPath", "/run/spire/agent-sockets/spire-agent.sock", "-write", "/tmp")
+        //cmd := exec.Command("/bin/spire-agent", "api", "fetch", "-socketPath", "/run/spire/sockets/agent.sock", "-write", "/tmp")
         stdoutStderr, err := cmd.CombinedOutput()
         if err != nil {
 			log.WithFields(log.Fields{
 				"err": err,
-                "output": stdoutStderr,
+                "output": string(stdoutStderr),
 			}).Error("Call to spire-agent failed")
             EnterCgroup(int32(myPID), int32(sleepPID))
             return registry.HandlerResultContinue()
